@@ -15,6 +15,8 @@ import sys
 
 from pathlib import Path
 from django.urls import reverse_lazy
+from dotenv import load_dotenv
+load_dotenv('/secrets/config.env')
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent

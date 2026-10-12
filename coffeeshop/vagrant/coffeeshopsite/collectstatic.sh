@@ -1,4 +1,4 @@
 . /secrets/config.env
 cd /var/www/coffeeshopsite
-python3 manage.py collectstatic --no-input
+python3 manage.py collectstatic --no-input -v 0
 

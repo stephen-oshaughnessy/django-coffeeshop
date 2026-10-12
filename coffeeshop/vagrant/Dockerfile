@@ -11,17 +11,33 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsqlite3-dev \
     apache2 libapache2-mod-wsgi-py3 \
     curl git vim nano ruby-full rubygems-integration \
+    msmtp \
   && rm -rf /var/lib/apt/lists/*
 
-# Python libs needed at runtime
-RUN pip3 install --no-cache-dir django psycopg2-binary python-dotenv
+# The contact form (and the command-injection lab) shells out to `ssmtp`, which
+# Ubuntu dropped after 20.04. Provide msmtp behind an `ssmtp` shim, pointed at
+# the local Mailcatcher, so contact email is delivered the same way as before.
+RUN printf 'account default\nhost localhost\nport 25\nauth off\ntls off\nfrom coffeeshop@coffeeshop.com\n' > /etc/msmtprc && \
+    chmod 644 /etc/msmtprc && \
+    printf '#!/bin/sh\nexec /usr/bin/msmtp "$@"\n' > /usr/local/bin/ssmtp && \
+    chmod 755 /usr/local/bin/ssmtp
 
-# (Optional) Mailcatcher used by lab
-RUN gem install mailcatcher
+# There is no systemd in the container, but the lab sheets use `systemctl` for
+# apache2/postgresql. Provide a shim that maps to `service` so those work.
+RUN printf '#!/bin/sh\n# Minimal systemctl shim (no systemd in this container).\nsvc="$2"\ncase "$svc" in\n  *.service) svc="${svc%%.service}";;\nesac\ncase "$1" in\n  start|stop|restart|reload|force-reload|status)\n    exec service "$svc" "$1";;\n  *)\n    echo "systemctl shim: ignoring: $*" >&2; exit 0;;\nesac\n' > /usr/local/bin/systemctl && \
+    chmod 755 /usr/local/bin/systemctl
+
+# Python libs, pinned to known-good versions so every student gets the same build
+COPY coffeeshopsite/requirements.txt constraints.txt /tmp/pip/
+RUN pip3 install --no-cache-dir -r /tmp/pip/requirements.txt -c /tmp/pip/constraints.txt
+
+# Mailcatcher used by lab
+RUN gem install mailcatcher --no-document
 
 # Vagrant SSH user setup
 RUN mkdir -p /var/run/sshd && \
     useradd -m -s /bin/bash vagrant && echo "vagrant:vagrant" | chpasswd && \
+    chmod 755 /home/vagrant && \
     usermod -aG sudo vagrant && \
     echo "vagrant ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/zz-vagrant && \
     chmod 440 /etc/sudoers.d/zz-vagrant && \
@@ -29,5 +45,9 @@ RUN mkdir -p /var/run/sshd && \
     sed -ri 's@session\\s*required\\s*pam_loginuid.so@session optional pam_loginuid.so@g' /etc/pam.d/sshd && \
     printf "UseDNS no\nClientAliveInterval 180\nClientAliveCountMax 3\n" >> /etc/ssh/sshd_config
 
+# Start the services whenever the container starts, then hand over to sshd
+COPY reboot-provision.sh /usr/local/bin/start-services.sh
+RUN chmod 755 /usr/local/bin/start-services.sh
+
 EXPOSE 22
-CMD ["/usr/sbin/sshd","-D"]
+CMD ["/bin/bash", "-c", "/usr/local/bin/start-services.sh; exec /usr/sbin/sshd -D"]

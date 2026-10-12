@@ -1,10 +1,57 @@
 # -*- mode: ruby -*-
 # vi: set ft=ruby :
 
+# Docker is the only supported provider, so a plain `vagrant up` works too
+# (otherwise Vagrant prefers VirtualBox whenever it happens to be installed).
+ENV['VAGRANT_DEFAULT_PROVIDER'] = 'docker'
+
+require 'socket'
+
+# Host ports used by the labs. csthirdparty uses 8081/1081 so both can run at once.
+APP_PORT  = 8080
+MAIL_PORT = 1080
+SSL_PORT  = 8100   # used by the CSRF lab (python3 manage.py runsslserver 0:8100)
+
+# Shared Docker network so coffeeshop (10.50.0.2) and csthirdparty (10.50.0.3)
+# can reach each other by those addresses (the command-injection lab's reverse
+# shell targets 10.50.0.3). Host access is still via the 127.0.0.1 ports above.
+LAB_NETWORK = "coffeeshop-lab"
+LAB_SUBNET  = "10.50.0.0/24"
+MY_IP       = "10.50.0.2"
+
+def port_in_use?(port)
+  Socket.tcp('127.0.0.1', port, connect_timeout: 1) { true }
+rescue StandardError
+  false
+end
+
+# Create the shared lab network once (idempotent, cross-platform).
+def ensure_lab_network
+  `docker network inspect #{LAB_NETWORK}`
+  return if $?.success?
+  system("docker network create --subnet=#{LAB_SUBNET} #{LAB_NETWORK}")
+end
+
+class PortInUseError < Vagrant::Errors::VagrantError
+  def initialize(msg)
+    @msg = msg
+    super()
+  end
+
+  def error_message
+    @msg
+  end
+end
+
 Vagrant.configure("2") do |config|
-  # Expose services on localhost
-  config.vm.network "forwarded_port", guest: 80,   host: 8080, auto_correct: true
-  config.vm.network "forwarded_port", guest: 1080, host: 1080, auto_correct: true
+  # Expose services on localhost only: this app is deliberately vulnerable, so
+  # it must not be reachable from other machines on the network.
+  # auto_correct is off on purpose: the lab sheets say http://localhost:8080,
+  # and silently moving to another port leaves students looking at whatever
+  # else (often an old coffeeshop container) still holds 8080.
+  config.vm.network "forwarded_port", guest: 80,   host: APP_PORT,  host_ip: "127.0.0.1", auto_correct: false
+  config.vm.network "forwarded_port", guest: 1080, host: MAIL_PORT, host_ip: "127.0.0.1", auto_correct: false
+  config.vm.network "forwarded_port", guest: SSL_PORT, host: SSL_PORT, host_ip: "127.0.0.1", auto_correct: false
 
   # Mount secrets folder from repo root
   config.vm.synced_folder "../secrets/", "/secrets"
@@ -13,26 +60,36 @@ Vagrant.configure("2") do |config|
   config.vm.provision :shell, path: "bootstrap.sh"
   config.vm.provision "shell", run: "always", path: "reboot-provision.sh"
 
-  # Optional: VirtualBox
-  config.vm.provider "virtualbox" do |vb, override|
-    override.vm.box = "ubuntu/focal64"
-    vb.name = "coffeeshop"
-    # vb.memory = 4096
-    # vb.cpus = 2
-  end
-
-  # Default (cross-platform): Docker
   config.vm.provider "docker" do |d, override|
     d.build_dir       = "."      # build from ./Dockerfile (this folder)
     d.remains_running = true
     d.has_ssh         = true
-    d.privileged      = true
-    d.ports           = ["8080:80", "1080:1080"]
+
+    # Join the shared lab network with a fixed address
+    d.create_args = ["--network", LAB_NETWORK, "--ip", MY_IP]
 
     # SSH for vagrant
     override.ssh.username   = "vagrant"
     override.ssh.password   = "vagrant"
     override.ssh.insert_key = false
+  end
+
+  # Create the shared network and explain port clashes before Docker fails with
+  # a cryptic error.
+  config.trigger.before :up do |t|
+    t.ruby do |env, machine|
+      next if machine.state.id == :running
+      ensure_lab_network
+      busy = [APP_PORT, MAIL_PORT, SSL_PORT].select { |p| port_in_use?(p) }
+      next if busy.empty?
+      msg = "Port(s) #{busy.join(', ')} on this computer are already in use, so the coffeeshop cannot start.\n" \
+            "This is usually a coffeeshop container left over from an earlier install.\n" \
+            "List what is using them with:\n"
+      busy.each { |p| msg << "    docker ps --filter publish=#{p}\n" }
+      msg << "then remove the old container with:  docker rm -f <CONTAINER ID>\n" \
+             "and run this command again. If nothing is listed, close the other program using the port."
+      raise PortInUseError.new(msg)
+    end
   end
 
   config.vm.boot_timeout = 600

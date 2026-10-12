@@ -11,7 +11,7 @@
     function gettest() {
         $.ajax({
             type: "GET",
-               url: "http://10.50.0.3/gettest/",
+               url: "http://127.0.0.1:8081/gettest/",
               success: function(data){ 
                    alert(data.status) 
                },
@@ -25,7 +25,7 @@
 
         $.ajax({
             type: "POST",
-               url: "http://10.50.0.3/posttest/",
+               url: "http://127.0.0.1:8081/posttest/",
                //data: $('#posttestform').serialize(), // serializes the form's elements.
                data: '{"value": "TestValue"}',
                contentType: "application/json; charset=utf-8",
@@ -40,7 +40,7 @@
     function credtest() {
         $.ajax({
             type: "GET",
-               url: "http://10.50.0.3/credtest/",
+               url: "http://127.0.0.1:8081/credtest/",
             xhrFields: {
                  withCredentials: true
             },
@@ -58,7 +58,7 @@
 
             <h2>CORS Test</h2>
 
-            <form id="posttestform" method="POST" action="http://10.50.0.3/posttest/">
+            <form id="posttestform" method="POST" action="http://127.0.0.1:8081/posttest/">
                 <input type="hidden" name="value" id="value" value="TestValue" />
             </form>
 
@@ -76,7 +76,7 @@
 
 <script>
     var i = document.createElement("img");
-    i.src = "http://10.50.0.3/media/adelboden.jpg";
+    i.src = "http://127.0.0.1:8081/media/adelboden.jpg";
     document.getElementById('cols').appendChild(i);
 </script>
 {% endblock %}

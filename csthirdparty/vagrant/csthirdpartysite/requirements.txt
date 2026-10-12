@@ -13,3 +13,5 @@ jupyterlab
 django-cors-headers
 django-csp
 pep8
+python-dotenv
+slowloris

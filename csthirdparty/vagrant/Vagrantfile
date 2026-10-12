@@ -1,44 +1,90 @@
 # -*- mode: ruby -*-
 # vi: set ft=ruby :
 
+# Docker is the only supported provider, so a plain `vagrant up` works too
+# (otherwise Vagrant prefers VirtualBox whenever it happens to be installed).
+ENV['VAGRANT_DEFAULT_PROVIDER'] = 'docker'
+
+require 'socket'
+
+# Host ports used by the labs. Different from coffeeshop (8080/1080) so both can run at once.
+APP_PORT  = 8081
+MAIL_PORT = 1081
+
+# Shared Docker network so coffeeshop (10.50.0.2) and csthirdparty (10.50.0.3)
+# can reach each other by those addresses. Host access is via the 127.0.0.1 ports.
+LAB_NETWORK = "coffeeshop-lab"
+LAB_SUBNET  = "10.50.0.0/24"
+MY_IP       = "10.50.0.3"
+
+def port_in_use?(port)
+  Socket.tcp('127.0.0.1', port, connect_timeout: 1) { true }
+rescue StandardError
+  false
+end
+
+# Create the shared lab network once (idempotent, cross-platform).
+def ensure_lab_network
+  `docker network inspect #{LAB_NETWORK}`
+  return if $?.success?
+  system("docker network create --subnet=#{LAB_SUBNET} #{LAB_NETWORK}")
+end
+
+class PortInUseError < Vagrant::Errors::VagrantError
+  def initialize(msg)
+    @msg = msg
+    super()
+  end
+
+  def error_message
+    @msg
+  end
+end
+
 Vagrant.configure("2") do |config|
-  # Base box and provisioning (keep as you had)
-  config.vm.box = "ubuntu/focal64"
+  # Expose services on localhost only (see coffeeshop/vagrant/Vagrantfile for why
+  # auto_correct is off)
+  config.vm.network "forwarded_port", guest: 80,   host: APP_PORT,  host_ip: "127.0.0.1", auto_correct: false
+  config.vm.network "forwarded_port", guest: 1080, host: MAIL_PORT, host_ip: "127.0.0.1", auto_correct: false
+
+  # Mount secrets folder from repo root
   config.vm.synced_folder "../secrets/", "/secrets"
+
+  # Provision
   config.vm.provision :shell, path: "bootstrap.sh"
-  config.vm.provision "shell", inline: "sudo apt install swapspace -y"
   config.vm.provision "shell", run: "always", path: "reboot-provision.sh"
 
-  # Use localhost ports instead of a fixed private IP
-  # config.vm.network "private_network", ip: "10.50.0.2"
+  config.vm.provider "docker" do |d, override|
+    d.build_dir       = "."      # build from ./Dockerfile (this folder)
+    d.remains_running = true
+    d.has_ssh         = true
 
-  # === Localhost access for ALL providers ===
-  # App: host 8080 -> guest 8100
-  config.vm.network "forwarded_port", guest: 8100, host: 8080, auto_correct: true, host_ip: "0.0.0.0"
-  # MailCatcher: host 1080 -> guest 1080
-  config.vm.network "forwarded_port", guest: 1080, host: 1080, auto_correct: true, host_ip: "0.0.0.0"
+    # Join the shared lab network with a fixed address
+    d.create_args = ["--network", LAB_NETWORK, "--ip", MY_IP]
 
-  # --- VirtualBox provider (keep any tweaks you already had) ---
-  config.vm.provider "virtualbox" do |vb|
-    vb.name = "coffeeshop"
-    # Add any existing vb.memory / vb.cpus here if you had them
+    # SSH for vagrant
+    override.ssh.username   = "vagrant"
+    override.ssh.password   = "vagrant"
+    override.ssh.insert_key = false
   end
 
-  # --- Docker provider (make Docker behave the same as VB) ---
-  config.vm.provider "docker" do |docker|
-    # If the original file had these image/settings, keep them:
-    docker.image = "mbakereth/vagrant-provider-ubuntu:focal"
-    docker.create_args = ['--memory=4g']
-    docker.create_args = ['--cpuset-cpus=2']
-
-    docker.remains_running = true
-    docker.has_ssh = true
-    docker.privileged = true
-    docker.volumes = ["/sys/fs/cgroup:/sys/fs/cgroup:rw"]
-    docker.create_args = ["--cgroupns=host"]
-    # Publish the same ports as the VB forwarded ports
-    docker.ports = ["8080:8100", "1080:1080"]
-    # To force arm64 testing:
-    # docker.create_args = ['--platform=linux/arm64']
+  # Create the shared network and explain port clashes before Docker fails with
+  # a cryptic error.
+  config.trigger.before :up do |t|
+    t.ruby do |env, machine|
+      next if machine.state.id == :running
+      ensure_lab_network
+      busy = [APP_PORT, MAIL_PORT].select { |p| port_in_use?(p) }
+      next if busy.empty?
+      msg = "Port(s) #{busy.join(', ')} on this computer are already in use, so csthirdparty cannot start.\n" \
+            "This is usually a csthirdparty container left over from an earlier install.\n" \
+            "List what is using them with:\n"
+      busy.each { |p| msg << "    docker ps --filter publish=#{p}\n" }
+      msg << "then remove the old container with:  docker rm -f <CONTAINER ID>\n" \
+             "and run this command again. If nothing is listed, close the other program using the port."
+      raise PortInUseError.new(msg)
+    end
   end
+
+  config.vm.boot_timeout = 600
 end

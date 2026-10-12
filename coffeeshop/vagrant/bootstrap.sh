@@ -54,7 +54,7 @@ fi
 # ---- Optional: install project requirements ----
 if [ -f "$APP_DIR/requirements.txt" ]; then
   echo "Installing Python requirements.txt…"
-  pip3 install --no-cache-dir -r "$APP_DIR/requirements.txt" || true
+  pip3 install --no-cache-dir -r "$APP_DIR/requirements.txt" -c /vagrant/constraints.txt
 fi
 
 # ---- Start PostgreSQL cluster if needed ----
@@ -70,16 +70,19 @@ if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='${DBOWNER
   sudo -u postgres psql -c "CREATE ROLE ${DBOWNER} LOGIN PASSWORD '${DBOWNERPWD}';" || true
 fi
 
-# ---- Rebuild DB & seed data (idempotent) ----
-bash "$APP_DIR/rebuild_database.sh"
-
 # ---- Apache: link project path & create vhost ----
 # Use a stable path Apache can read; keep /vagrant as the source of truth
 [ -d /var/www/coffeeshopsite ] || ln -s "$APP_DIR" /var/www/coffeeshopsite
 
+# Also answer on 8080 inside the box, so `curl http://localhost:8080` gives the
+# same result inside and outside the container
+grep -q '^Listen 8080' /etc/apache2/ports.conf || echo 'Listen 8080' >> /etc/apache2/ports.conf
+echo 'ServerName localhost' > /etc/apache2/conf-available/servername.conf
+a2enconf servername >/dev/null
+
 if [ ! -f /etc/apache2/sites-available/coffeeshop.conf ]; then
   cat >/etc/apache2/sites-available/coffeeshop.conf <<'CONF'
-<VirtualHost *:80>
+<VirtualHost *:80 *:8080>
     ServerName localhost
 
     # Django via mod_wsgi
@@ -99,8 +102,9 @@ if [ ! -f /etc/apache2/sites-available/coffeeshop.conf ]; then
         </Files>
     </Directory>
 
-    ErrorLog  ${APACHE_LOG_DIR}/coffeeshop_error.log
-    CustomLog ${APACHE_LOG_DIR}/coffeeshop_access.log combined
+    # Standard log names, as used in the troubleshooting sheet
+    ErrorLog  ${APACHE_LOG_DIR}/error.log
+    CustomLog ${APACHE_LOG_DIR}/access.log combined
 </VirtualHost>
 CONF
 fi
@@ -108,7 +112,10 @@ fi
 a2enmod wsgi rewrite >/dev/null 2>&1 || true
 a2ensite coffeeshop >/dev/null 2>&1 || true
 a2dissite 000-default >/dev/null 2>&1 || true
-systemctl reload apache2
+
+# ---- Rebuild DB & seed data (idempotent; also restarts Apache) ----
+# Runs after the Apache setup because the seed scripts use /var/www/coffeeshopsite
+bash "$APP_DIR/rebuild_database.sh"
 
 echo "✅ Provisioning complete:"
 echo "   App:        http://localhost:8080"

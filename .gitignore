@@ -20,3 +20,12 @@
 **/*.key
 **/*.pub
 **/*.ipynb
+
+# Lab instruction sheets & answer files — distributed via Brightspace, drip-fed
+# week to week. Never push these to the student-facing repo.
+/lab-1/
+/xss-lab/
+/sqli-lab/
+/access-control/
+/command-injection/
+/csrf-lab/

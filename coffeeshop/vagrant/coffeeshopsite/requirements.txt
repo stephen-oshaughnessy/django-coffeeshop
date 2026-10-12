@@ -17,3 +17,4 @@ django-two-factor-auth[phonenumberslite]
 django-sslserver
 django-mfa2
 pep8
+python-dotenv

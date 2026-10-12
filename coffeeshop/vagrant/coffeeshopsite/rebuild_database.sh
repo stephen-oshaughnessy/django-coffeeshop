@@ -35,7 +35,8 @@ if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='${DBOWNER
 fi
 
 # 2) Recreate database
-sudo -u postgres psql -c "DROP DATABASE IF EXISTS ${DBNAME};"
+# WITH (FORCE) disconnects any open sessions (e.g. Apache) that would block the drop
+sudo -u postgres psql -c "DROP DATABASE IF EXISTS ${DBNAME} WITH (FORCE);"
 sudo -u postgres psql -c "CREATE DATABASE ${DBNAME} OWNER ${DBOWNER};"
 sudo -u postgres psql -c "ALTER DATABASE ${DBNAME} OWNER TO ${DBOWNER};"
 

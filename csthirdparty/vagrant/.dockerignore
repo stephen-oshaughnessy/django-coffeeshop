@@ -1,0 +1,5 @@
+# Only these files are needed to build the image; skipping the rest keeps builds fast.
+*
+!csthirdpartysite/requirements.txt
+!constraints.txt
+!reboot-provision.sh
